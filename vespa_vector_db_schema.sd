@@ -1,0 +1,87 @@
+schema cnsl {
+    document cnsl {
+        field id type long {
+            indexing: summary | attribute
+        }
+        field source type string {
+            indexing: summary | attribute
+        }          
+        field doc_ref type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field citation type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field summ type string {
+            indexing: index
+            index: enable-bm25
+        }   
+        field text type array<string> {
+            indexing: index | summary
+            index: enable-bm25
+            bolding: on
+        }
+        field text_embedding type tensor<float>(p{},x[1536]) {
+            indexing: attribute
+            attribute {
+                distance-metric: angular
+                paged
+            }
+        }
+        field summ_embedding type tensor<float>(x[1536]) {
+            indexing: attribute
+            attribute {
+                distance-metric: angular
+                paged
+            }
+        }
+    }
+
+    document-summary my-summary {
+        summary id type long {}
+        summary source type string {}
+        summary citation type string {}
+        summary text_summ {
+            source: text
+            dynamic
+        }
+        summary text type array<string> {}
+    }
+
+    fieldset default {
+        fields: doc_ref, citation, summ, text
+    }
+
+    rank-profile hybrid inherits default {
+        inputs {
+            query(tensor_tes) tensor<float>(x[1536])
+        }
+        function bm25sum() {
+            expression: bm25(text) + 0.5*bm25(summ) + 0.3*bm25(citation) + 0.3*bm25(doc_ref)    
+        }
+        function avg_para_sim() {
+            expression: reduce(sum(l2_normalize(query(tensor_tes), x) * l2_normalize(attribute(text_embedding), x), x), avg, p)
+        }     
+        function cossim_summ() {
+            expression: cosine_similarity(attribute(summ_embedding),query(tensor_tes),x)
+        }
+        first-phase {
+            expression: cos(distance(field, text_embedding))
+        }
+        global-phase {
+            expression {
+                0.8*normalize_linear(bm25sum) + 0.5*normalize_linear(avg_para_sim) + normalize_linear(firstPhase) + 0.3*normalize_linear(cossim_summ)
+            }
+            rerank-count: 5000
+        }
+        match-features {
+            closest(text_embedding)
+            firstPhase
+            bm25sum
+            avg_para_sim
+            cossim_summ
+        }
+    }
+}
